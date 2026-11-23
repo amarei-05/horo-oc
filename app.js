@@ -222,6 +222,7 @@ let loadError = null;
 let editMode = false;
 let pw = null;
 let listQ = '';
+let listWorld = '';
 let typeTimer = null;
 let audio = null;
 const mcache = new Map();
@@ -255,6 +256,14 @@ function inkFor(hex) {
   return L > 0.42 ? '#23201b' : '#ffffff';
 }
 function pcStyle(d) { const pc = validHex(d && d.point_color); return `--pc:${pc};--pc-ink:${inkFor(pc)}`; }
+function setHero(html, style) {
+  const h = $('#hero');
+  h.innerHTML = html || '';
+  h.hidden = !html;
+  h.style.cssText = style || '';
+}
+const latinOf = d => ((d.alt_names || []).map(a => trim(a.value)).find(v => /^[\x20-\x7e]+$/.test(v)) || '');
+const noOf = c => String((chars || []).indexOf(c) + 1).padStart(2, '0');
 const thumbOf = d => (d.portrait && (d.portrait.thumb || d.portrait.img)) || '';
 const byId = id => (chars || []).find(c => c.id === id);
 const fmtHeight = h => /^\d+(\.\d+)?$/.test(trim(h)) ? trim(h) + 'cm' : trim(h);
@@ -349,6 +358,7 @@ function stopMedia() {
 async function render() {
   stopMedia();
   renderTop();
+  setHero('');
   const main = $('#main');
   const r = route();
   if (!chars && !loadError) {
@@ -408,6 +418,21 @@ function snippet(text, token) {
 }
 
 function renderList(main) {
+  const worlds = [...new Set(chars.map(c => trim(c.data.world)).filter(Boolean))];
+  if (listWorld && !worlds.includes(listWorld)) listWorld = '';
+  setHero(`<div class="hero-in">
+      <span class="hero-wm" aria-hidden="true">ARCHIVE</span>
+      <div class="hero-head">
+        <p class="eyebrow"><i aria-hidden="true"></i>CHARACTERS</p>
+        <h1 class="hero-title">캐릭터 목록 <span class="count">${String(chars.length).padStart(2, '0')}</span></h1>
+      </div>
+      ${worlds.length >= 2 ? `<div class="tabs" role="group" aria-label="세계관 고르기">${['', ...worlds].map(w => `<button type="button" class="tab" data-world="${esc(w)}" aria-pressed="${w === listWorld}">${w ? esc(w) : '전체'}</button>`).join('')}</div>` : ''}
+    </div>`);
+  $$('#hero .tab').forEach(b => b.onclick = () => {
+    listWorld = b.dataset.world;
+    $$('#hero .tab').forEach(x => x.setAttribute('aria-pressed', String(x === b)));
+    drawGrid();
+  });
   main.innerHTML = `
     <section class="finder">
       <label class="search">
@@ -426,7 +451,7 @@ function drawGrid() {
   const grid = $('#grid'), note = $('#note');
   if (!grid) return;
   const tokens = listQ.toLowerCase().split(/\s+/).filter(Boolean);
-  const filtering = tokens.length > 0;
+  const filtering = tokens.length > 0 || !!listWorld;
   if (!chars.length) {
     grid.outerHTML = `<div class="empty" id="grid"><strong>아직 등록된 캐릭터가 없어요</strong>${editMode ? '<a class="btn solid" href="#/new">첫 캐릭터 등록하기</a>' : '<span>캐릭터가 등록되면 여기에 도감처럼 모여요.</span>'}</div>`;
     note.textContent = '';
@@ -434,6 +459,7 @@ function drawGrid() {
   }
   const rows = [];
   chars.forEach((c, i) => {
+    if (listWorld && trim(c.data.world) !== listWorld) return;
     const m = matchChar(c, tokens);
     if (m.ok) rows.push({ c, i, hit: m.hit });
   });
@@ -446,7 +472,8 @@ function drawGrid() {
   grid.className = 'grid';
   grid.innerHTML = rows.map(({ c, i, hit }) => {
     const d = c.data;
-    const sub = trim(d.world) || trim(d.job);
+    const sub = trim(d.job) || trim(d.world);
+    const latin = latinOf(d);
     const move = editMode && !filtering ? `<div class="card-move">
         <button type="button" data-move="-1" data-i="${i}" aria-label="${esc(d.name)} 앞으로" ${i === 0 ? 'disabled' : ''}>◀</button>
         <button type="button" data-move="1" data-i="${i}" aria-label="${esc(d.name)} 뒤로" ${i === chars.length - 1 ? 'disabled' : ''}>▶</button>
@@ -455,6 +482,7 @@ function drawGrid() {
       <a class="card" href="#/c/${encodeURIComponent(c.id)}">
         <div class="card-art"><img alt="" data-media="${esc(thumbOf(d))}" loading="lazy"></div>
         <div class="card-plate">
+          <span class="card-meta"><span>${String(i + 1).padStart(2, '0')}</span><i aria-hidden="true"></i>${latin ? `<span>${esc(latin.toUpperCase())}</span>` : ''}</span>
           <span class="card-name">${esc(d.name)}</span>
           <span class="card-sub">${sub ? esc(sub) : '&nbsp;'}</span>
           ${hit ? `<span class="card-hit">${esc(hit.label)}: ${snippet(hit.text, hit.token)}</span>` : ''}
@@ -497,55 +525,48 @@ function renderDetail(main, id) {
   const alts = (d.alt_names || []).filter(a => trim(a.value));
   const kws = (d.keywords || []).filter(k => trim(k));
   const rels = (d.relations || []).filter(r => (r.char_id && byId(r.char_id)) || trim(r.name));
-  const right = [];
-  if (kws.length || trim(d.personality_text)) right.push(`<section class="panel"><h2><span>성격</span></h2>${kws.length ? `<div class="keywords">${kws.map(k => `<span class="kw">${esc(k)}</span>`).join('')}</div>` : ''}${trim(d.personality_text) ? `<p class="prose">${esc(d.personality_text)}</p>` : ''}</section>`);
-  if (trim(d.features)) right.push(`<section class="panel"><h2><span>특징</span></h2><p class="prose">${esc(d.features)}</p></section>`);
-  if (trim(d.past)) right.push(`<section class="panel"><h2><span>과거</span></h2><p class="prose">${esc(d.past)}</p></section>`);
-  const latin = alts.find(a => /^[\x20-\x7e]+$/.test(trim(a.value)));
-  const wm = latin ? trim(latin.value) : d.name;
-  const statsHTML = stats.length ? `<dl class="stats-mini">${stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : '';
-  const sheet = right.length ? `<div class="sheet">${right.join('')}</div>` : '';
-  const relHTML = rels.length ? `<section class="panel" style="margin-top:20px"><h2><span>관계</span></h2><div class="relations">${rels.map(r => {
+  const sec = (ko, en, body) => `<section class="sec"><h2><i aria-hidden="true"></i>${ko}<small>${en}</small></h2>${body}</section>`;
+  const secs = [];
+  if (trim(d.personality_text)) secs.push(sec('성격', 'PERSONALITY', `<p class="prose">${esc(d.personality_text)}</p>`));
+  if (trim(d.features)) secs.push(sec('특징', 'FEATURES', `<p class="prose">${esc(d.features)}</p>`));
+  if (trim(d.past)) secs.push(sec('과거', 'BACKSTORY', `<p class="prose">${esc(d.past)}</p>`));
+  if (rels.length) secs.push(sec('관계', 'RELATIONS', `<div class="relations">${rels.map(r => {
     const linked = r.char_id && byId(r.char_id);
     const name = linked ? linked.data.name : r.name;
     const face = linked ? thumbOf(linked.data) : r.face;
     const inner = `${face ? `<img class="rel-face" alt="" data-media="${esc(face)}">` : `<span class="rel-face none" aria-hidden="true">${esc([...trim(name)][0] || '?')}</span>`}
-      <div><div class="rel-name">${esc(name)}</div>${trim(r.label) ? `<div class="rel-label">${esc(r.label)}</div>` : ''}${trim(r.desc) ? `<div class="rel-desc">${esc(r.desc)}</div>` : ''}</div>`;
+      <div><div class="rel-top"><span class="rel-name">${esc(name)}</span>${trim(r.label) ? `<span class="rel-label">${esc(r.label)}</span>` : ''}</div>${trim(r.desc) ? `<div class="rel-desc">${esc(r.desc)}</div>` : ''}</div>`;
     return linked ? `<a class="rel" href="#/c/${encodeURIComponent(linked.id)}" style="${pcStyle(linked.data)}">${inner}</a>` : `<div class="rel">${inner}</div>`;
-  }).join('')}</div></section>` : '';
-  const art = d.full
-    ? `<img class="full" alt="${esc(d.name)} 전신 이미지" data-media="${esc(d.full)}">`
-    : `<img class="bust" alt="${esc(d.name)} 두상 이미지" data-media="${esc(d.portrait && d.portrait.img)}">`;
-  const bubble = cls => `<div class="bubble ${cls}" role="group" aria-label="한마디">
-    <p class="bubble-text">${trim(q.text) ? '' : '…'}</p>
-    ${q.voice || trim(q.cv) ? `<div class="bubble-foot">
-      ${q.voice ? `<button class="play" type="button" aria-label="보이스 재생"><svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="i-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>` : ''}
-      ${trim(q.cv) ? `<span class="bubble-cv">CV. ${esc(q.cv)}</span>` : ''}
-    </div>` : ''}
-  </div>`;
-  main.innerHTML = `<article class="detail" style="${pcStyle(d)}">
-    <a class="back" href="#/">◀ 목록</a>
-    <div class="banner">
-      <div class="banner-art">
-        <div class="art-deco" aria-hidden="true">
-          <span class="wm">${esc(wm)}</span>
-          ${trim(d.world) ? `<span class="seal"><b>${esc(d.world)}</b></span>` : ''}
-        </div>
-        ${hasDialog ? bubble("bubble-art") : ''}
-        <div class="art-frame">${art}</div>
-      </div>
-      <div class="banner-info">
-        ${hasDialog ? bubble("bubble-side") : ''}
-        ${trim(d.world) || GROUPS.includes(d.group) ? `<div class="banner-tags">${trim(d.world) ? `<span class="tag">${esc(d.world)}</span>` : ''}${GROUPS.includes(d.group) ? `<span class="tag fill">${esc(d.group)}</span>` : ''}</div>` : ''}
+  }).join('')}</div>`));
+  const wm = latinOf(d) || d.name;
+  const meta = [trim(d.world), GROUPS.includes(d.group) ? d.group : ''].filter(Boolean);
+  setHero(`<div class="hero-in d-hero">
+      <span class="hero-wm" aria-hidden="true">${esc(wm.toUpperCase())}</span>
+      <div class="d-face"><img alt="${esc(d.name)} 두상 이미지" data-media="${esc(d.portrait && d.portrait.img)}"></div>
+      <div class="d-id">
+        <p class="d-meta"><span>No.${noOf(c)}</span>${meta.length ? `<i aria-hidden="true"></i><span>${meta.map(esc).join(' · ')}</span>` : ''}</p>
         <h1 class="name">${esc(d.name)}</h1>
-        ${alts.length ? `<ul class="alt-names">${alts.map(a => `<li>${trim(a.label) ? `<span>${esc(a.label)}</span>` : ''}${esc(a.value)}</li>`).join('')}</ul>` : ''}
-        ${statsHTML}
+        ${alts.length ? `<p class="alt-names">${alts.map(a => `<span${trim(a.label) ? ` title="${esc(a.label)}"` : ''}>${esc(a.value)}</span>`).join('')}</p>` : ''}
+      </div>
+    </div>`, pcStyle(d) + ';border-bottom:3px solid var(--pc)');
+  const quote = hasDialog ? `<figure class="quote bubble" role="group" aria-label="한마디">
+      <span class="q-mark" aria-hidden="true">“</span>
+      <div class="q-body"><p class="bubble-text">${trim(q.text) ? '' : '…'}</p>${trim(q.cv) ? `<p class="bubble-cv">CV. ${esc(q.cv)}</p>` : ''}</div>
+      ${q.voice ? `<button class="play" type="button" aria-label="보이스 재생"><svg class="i-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg><svg class="i-stop" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.5"/></svg></button>` : ''}
+    </figure>` : '';
+  const statsHTML = stats.length ? `<dl class="stats">${stats.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl>` : '';
+  const kwHTML = kws.length ? `<div class="keywords">${kws.map(k => `<span class="kw">${esc(k)}</span>`).join('')}</div>` : '';
+  main.innerHTML = `<article class="detail" style="${pcStyle(d)}">
+    <a class="back" href="#/">← 목록으로</a>
+    <div class="d-layout">
+      ${d.full ? `<aside class="d-art"><div class="d-art-frame"><img class="full" alt="${esc(d.name)} 전신 이미지" data-media="${esc(d.full)}"></div><p class="d-art-cap">FULL BODY</p></aside>` : ''}
+      <div class="d-body">
+        ${quote}${statsHTML}${kwHTML}${secs.join('')}
+        ${editMode ? `<div class="detail-actions"><a class="btn solid" href="#/edit/${encodeURIComponent(c.id)}">이 캐릭터 수정</a></div>` : ''}
       </div>
     </div>
-    ${sheet}
-    ${relHTML}
-    ${editMode ? `<div class="detail-actions"><a class="btn solid" href="#/edit/${encodeURIComponent(c.id)}">이 캐릭터 수정</a></div>` : ''}
   </article>`;
+  hydrate($('#hero'));
   hydrate(main);
   if (hasDialog) setupDialog(d);
 }
